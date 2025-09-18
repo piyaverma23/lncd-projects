@@ -2,19 +2,22 @@
 title: "project_val"
 output: html_document
 date: "2025-08-12"
+editor_options: 
+  chunk_output_type: console
 ---
 
 #house and tools
 ```{r}
 pacman::p_load(tidyverse) # install (if needed) and load a la "library()"
 #note: setting the working directory is directing R to pull the files from the house and setting up your libraries to work / NOT to direct R for the file path to save your data
+library(dplyr)
+
 ```
 
 #read in
 ```{r}
-pss <- read.csv("/Volumes/Hera/Projects/7TBrainMech/scripts/behave/PSS_score.csv")
+pss_raw <- read.csv("/Volumes/Hera/Projects/7TBrainMech/scripts/behave/PSS_score.csv")
 
-#visualization - histograms by score and 
 ```
 
 #pss scoring 
@@ -60,21 +63,196 @@ pss <- read.csv("/Volumes/Hera/Projects/7TBrainMech/scripts/behave/PSS_score.csv
 
 #merge 7T
 ```{r}
-merge7t <- read.csv("/Volumes/Hera/Projects/hippocampal_myelin/sample_info/merge_7t_04172025.csv") %>% select(lunaid, visitno, behave.date, sess.age, sex)
+merge7t_raw <- read.csv("/Volumes/Hera/Projects/hippocampal_myelin/sample_info/merge_7t_04172025.csv") %>% select(lunaid, visitno, behave.date, sess.age, sex, visitno, matches("ADI"))
 
-#make ld8 column in merge7t
-merge7t <- merge7t %>%
-  mutate(
-    behave.date = as.Date(as.character(behave.date), format = "%Y%m%d"),
-    ld8 = paste0(lunaid, "_", format(behave.date, "%Y%m%d"))
-  )
+#make ld8 column in merge7t - don't need actually
+# merge7t <- merge7t %>%
+#   mutate(
+#     behave.date = as.Date(as.character(behave.date), format = "%Y%m%d"),
+#     ld8 = paste0(lunaid, "_", format(behave.date, "%Y%m%d"))
+#   )
 
 ```
+
+#fixing id NAs 
+
 
 #pss_merge7t
 ```{r}
-test <- left_join(pss, merge7t, by = "ld8")
+
+#separting ld8 into lunaid and date in pss - to merge by lunaid
+
+#making the visit number column to merge smoother - to merge by visitno
+pss <- pss_raw %>%
+  separate(ld8, into = c("lunaid", "date"), sep = "_") %>%
+  mutate(visitno = str_extract(battery, "(?<=Y)[0-9]"))
+  
+# merge7t <- merge7t %>%
+#   separate(ld8, into = c("lunaid", "date"), sep = "_")
+
+
+#changing both pss / merge7t lunaid and visitno column to be compatible 
+pss <- pss %>% 
+  mutate(lunaid = as.character(lunaid)) %>% 
+  mutate(visitno = as.integer(visitno))
+
+merge7t <- merge7t %>% 
+  mutate(lunaid = as.character(lunaid))%>% 
+  mutate(visitno = as.integer(visitno))
+
+pss_merge7t <- left_join(pss, merge7t, by = c("lunaid", "visitno"))
+#NAs are due to not having merge7t data for visitno2 or 3 
+#since there is visitno 1 in pss
+
+#91 are visitno 2 
+#33 are visitno 3
 ```
+
+#pss histograms
+```{r}
+
+#install.packages("ggplot2") 
+#REVISIT ME: R BEING MEAN TO ME , SOMETHING WRONG WITH RHEA? 
+#restarting it helepd but R still being shady
+library(ggplot2)
+library(ggthemes)
+
+#frequency of pss scores
+ggplot(pss_merge7t,aes(x=score)) +
+         geom_histogram(binwidth = 2, color = "black", alpha = 0.8, 
+                        position = "identity", na.rm = TRUE)+ 
+         labs(title = "Frequency of PSS Scores", 
+              x = "PSS Score", y = "Frequency") +
+  see::theme_modern()
+
+#creating age group column for frequency by age histogram
+pss_merge7t <- pss_merge7t %>% 
+  mutate (sess.age = as.integer(sess.age))
+
+
+#age range: 11-32 , splitting so that there is somewhat equal amount of people in each group
+pss_merge7t <- pss_merge7t %>%
+  mutate(age_group = cut(sess.age, 
+                          breaks = c(10,15, 19, 23, 32), 
+                          labels = c("11-15", "16-19", "20-23", "24-32"), 
+                          right = TRUE)) 
+
+#filtering out the NAs for now in age group
+df_filtered <- pss_merge7t[!is.na(pss_merge7t$age_group), ]
+
+
+#histogram by age 
+ggplot(df_filtered, 
+       aes(x = score, fill = age_group)) +
+  geom_histogram(binwidth = 2, color = "black", alpha = 0.4,
+                 position = "identity", na.rm = TRUE) +
+  labs(title = "Frequency of PSS Scores by Age Group", 
+       x = "PSS Score", y = "Frequency", fill = "Age Group") +
+  theme_classic()
+
+
+#histogram by age -- attempt 2 (bar is the age group?)
+ggplot(df_filtered, 
+       aes(x = score, fill = age_group)) +
+  geom_histogram(binwidth = 5, color = "black", alpha = 0.8,
+                 position = "dodge", na.rm = TRUE) +
+  labs(title = "Frequency of PSS Scores by Age Group", 
+       x = "PSS Score", y = "Frequency", fill = "Age Group") +
+  theme_classic()
+```
+
+#NAs 
+```{r}
+#NAs = lantern flies
+pss_merge7t$lunaid[25] <- 11731
+pss_merge7t$lunaid[26] <- 11715
+pss_merge7t$lunaid[29] <- 11713
+#score = 20, date = 2020707 -- 11731
+# score = 21, date = 2020707 -- 11715
+# score = 17, date = 20200826, -- 11713 (went based of initials so not 100% sure)
+```
+
+#visitno integrity check
+```{r}
+library(dplyr)
+
+#getting lunaids for visit 3 only
+visit3_ids <- pss_merge7t %>%
+  filter(visitno == 3) %>%
+  pull(lunaid) %>%
+  unique()
+
+#getting lunaids for visit 2
+visit2_ids <- pss_merge7t %>%
+  filter(visitno == 2) %>%
+  pull(lunaid) %>%
+  unique()
+
+#which visit 3 subs are not in visit 2
+missing_visit2 <- setdiff(visit3_ids, visit2_ids)
+
+missing_visit2
+#11657 #11323 #11815 #11641
+```
+
+#ADI histograms
+```{r}
+
+#bc R is in a mood
+pss_merge7t$ADI_STATERNK <- as.numeric(as.character(pss_merge7t$ADI_STATERNK))
+pss_merge7t$ADI_NATRANK <- as.numeric(as.character(pss_merge7t$ADI_NATRANK))
+
+#state rank histogram 
+ggplot(pss_merge7t,aes(x=ADI_STATERNK)) +
+         geom_histogram(binwidth = 2, color = "black", alpha = 0.8, 
+                        position = "identity", na.rm = TRUE)+ 
+         labs(title = "Frequency of ADI State Rank", 
+              x = "ADI State Rank", y = "Frequency") +
+  see::theme_modern()
+
+#national rank histogram 
+ggplot(pss_merge7t,aes(x=ADI_NATRANK)) +
+         geom_histogram(binwidth = 5, color = "black", alpha = 0.8, 
+                        position = "identity", na.rm = TRUE)+ 
+         labs(title = "Frequency of ADI National Rank", 
+              x = "ADI National Rank", y = "Frequency") +
+  see::theme_modern()
+
+#using national rank because its frequency of low, mid and high scores are pretty evenly distributed
+#state rank is skewed because frequency of low scores are highest 
+```
+
+#geom_point PSS, ADI
+```{r}
+ggplot(pss_merge7t, aes(x = score, y = ADI_NATRANK)) + 
+  geom_point(alpha = 1, color = "steelblue") + 
+  geom_smooth(method = "lm", color = "darkred", size = 1) + 
+  see ::theme_modern() +
+  labs(
+    title = NULL, 
+    x = "PSS Score", 
+    y = "ADI National Rank"
+  )
+```
+
+
+
+
+
+#next steps 
+```{r}
+#adi and pss linear regression Pearson's correlation  (spearman's -- when individual variables aren't normal distribution or if are on different scales so it ranks it to be on equal scale)
+#anova when comparing age groups 
+
+#cortisol?
+#hpc - amy
+
+#pss 2 + brain 1 vs pss 2 + brain 2 : 
+#adi ; pss ; hpc-amy (DANS!! WOOHOO)
+```
+
+
+
 
 
 
