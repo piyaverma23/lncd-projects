@@ -1,0 +1,186 @@
+---
+title: "project_destiny"
+output: html_document
+date: "2025-08-12"
+---
+
+#house and tools
+```{r}
+setwd("/Volumes/Hera/Piya")
+#install.packages("tidyverse") 
+library(tidyverse)
+library(dplyr)
+library(stringr)
+```
+
+#read ins 
+```{r}
+upps_raw <- read.csv("upps_scored.csv")
+rt_18_raw <- read.csv("rt18.csv")
+hpc_raw <- read.csv("7T_hpc_roi_gamadj_final_20250418.csv")%>%
+  select(lunaid, visitno, sipfc.date, sess.age, hemisphere, sex, Glu..SD, GABA..SD,
+         GMrat, HP_head, HP_body, HP_tail, GABA.Cre_gamadj, Glu.Cre_gamadj,
+         glugaba_diff)
+merge7t_raw2 <-read.csv("merged_7t.csv")
+
+```
+
+#rt18 scoring
+```{r}
+#renaming rt_18 columns to match millisecond inquisit version will sent
+rt_18_scored <- rt_18_raw %>%
+  rename(q16_factor1 = i.sometimes.do..crazy..things.just.for.fun., 
+         q5_factor1 = would.you.enjoy.parachute.jumping., 
+         q6_factor1 = do.you.welcome.new.and.exciting.experiences.and.sensations..even.if.they.are.a.little.frightening.or.unconventional., 
+         q15_factor1 = i.sometimes.like.to.do.things.that.are.a.little.frightening., 
+         q18_factor1 = i.like..wild..uninhibited.parties., 
+         q14_factor1 = i.enjoy.getting.into.new.situations.where.you.can.t.predict.how.things.turn.out., 
+         q7_factor1 = i.often.try.new.things.just.for.fun.or.thrills..even.if.most.people.think.it.is.a.waste.of.time., 
+         q4_factor1 = do.you.enjoy.taking.risks., 
+         q17_factor1 = i.prefer.friends.who.are.excitingly.unpredictable., 
+         q12_factor2 = i.often.follow.my.instincts..hunches..or.intuition.without.thinking.through.all.the.details., 
+         q9R_factor2 = i.like.to.think.about.things.for.a.long.time.before.i.make.a.decision., 
+         q10R_factor2 = i.usually.think.about.all.the.facts.in.detail.before.i.make.a.decision., 
+         q13_factor2 = i.often.do.things.on.impulse., 
+         q3_factor2 = do.you.mostly.speak.before.thinking.things.out., 
+         q2R_factor2 = do.you.usually.think.carefully.before.doing.anything., 
+         q1_factor2 = do.you.often.get.into.a.jam.because.you.do.things.without.thinking., 
+         q11R_factor2 = i.enjoy.saving.money.more.than.spending.it.on.entertainment.or.thrills., 
+         q8_factor2 = i.often.spend.money.until.i.run.out.of.cash.or.get.into.debt.from.using.too.much.credit.) %>%
+  select (-do.you.welcome.new.and.exciting.experiences.and.sensations..even.if.they.are.a.little.frightening... ) %>%
+  separate (ld8, into = c("id", "date"), sep = "_")  #separating luna id
+
+#setting up for scoring as some are reversed 
+regular_cols <- c("q1_factor2", "q3_factor2", "q4_factor1", "q5_factor1", 
+                  "q6_factor1", "q7_factor1", "q8_factor2", "q12_factor2", 
+                  "q13_factor2", "q14_factor1", "q15_factor1", "q16_factor1", 
+                  "q17_factor1", "q18_factor1")
+
+reverse_cols <- c("q2R_factor2", "q9R_factor2", "q10R_factor2", "q11R_factor2")
+
+rt_18_scored <- rt_18_scored %>%
+  mutate (
+    across(all_of(regular_cols), ~ case_when(
+      . == "Yes" ~ 1, 
+      . == "No" ~ 0,
+      TRUE       ~ NA_real_
+    )),
+    across(all_of(reverse_cols), ~ case_when(
+      . == "Yes" ~ 0,
+      . == "No"  ~ 1,
+      TRUE       ~ NA_real_
+    ))
+  )
+
+#total score: sum of all responses
+#factor1 : sum of q4,5,6,7,14,15,16,17,18 -- risk taking behavior
+#factor2: sum of q1,2,3,8,9,10,11,12,13 -- risk assessment
+
+rt_18_scored <- rt_18_scored %>%
+  mutate(total_score = rowSums(across(starts_with("q")), na.rm = TRUE)) %>%
+  mutate(factor1_score = rowSums(across(ends_with("factor1")), na.rm = TRUE))%>%
+  mutate(factor2_score = rowSums(across(ends_with("factor2")), na.rm = TRUE))
+  
+```
+
+#upps scoring
+```{r}
+upps_scored <- upps_raw %>% 
+  separate (id, into = c("id", "date"), sep = "_") %>%
+  mutate(negurg = upps_negurg/12, 
+         pre = upps_pre/11, 
+         pers = upps_pers/10, 
+         ss = upps_ss/12, 
+         posurg = upps_pu/14, 
+         total = upps_tot/59)
+
+```
+
+#lunaid match 
+```{r}
+#checking id match in rt18 and upps 
+
+upps_counts <- upps_scored %>% count(id, name = "freq_upps")
+rt_counts <- rt_18_scored %>% count(id, name = "freq_rt")
+
+# Join and compare
+compare_ids <- full_join(upps_counts, rt_counts, by = "id")
+
+#checking dates match across each identical id for both surveys 
+
+dates_upps <- upps_scored %>% select(id, date)
+dates_rt <- rt_18_scored %>% select(id, date) 
+date_check <- full_join(dates_upps, dates_rt, by = "id")
+all(date_check$date_upps == date_check$date_rt, na.rm = TRUE) #ran in console(T)
+```
+
+#upps_rt18
+```{r}
+#merging upps + rt18
+test <- inner_join(upps_scored, rt_18_scored, by = c("id", "date"))
+
+#removing repeat id 11790, date 20190626 
+upps_rt18 <- test [-(315:317),] #50 rows with NAs 
+
+upps_rt18_filtered <- na.omit(upps_rt18)  #has the 50 NAs removed 
+
+```
+
+#behave_final 
+```{r}
+#getting merge_7t involved 
+
+# subset merge7t for columns of interest
+demo <- merge7t_raw2 %>%
+  mutate(date = behave.date) %>% select(-c(behave.date)) 
+
+# adjust lunaid column in upps df
+upps_rt18_filtered <- upps_rt18_filtered %>% mutate(lunaid = id) 
+upps_rt18_filtered$lunaid <- as.integer(upps_rt18_filtered$lunaid)
+upps_rt18_filtered$date <- as.integer(upps_rt18_filtered$date)
+upps_rt18_filtered <- unique(upps_rt18_filtered)
+
+# merge together based on lunaid and date to get visitno
+behave_final <- left_join(upps_rt18_filtered, demo, by = c("lunaid", "date"))
+
+# check missing visitno
+missing_visitno <- behave_final %>% filter(is.na(visitno)) #75
+#maybe because the date for merge isn't always aligning because visit date doesn't always mean survey date
+# fuzzy_join using LNCD tool package -- to get missing 75?
+
+```
+
+#hpc_behave
+```{r}
+#merging with hpc df 
+hpc_behave <- left_join(hpc_raw, behave_final, by = c("lunaid", "visitno"))
+
+# check how many are missing behavioral data in the hpc sample
+missing_behave <- hpc_behave %>% filter(is.na(factor1_score))
+length(unique(missing_behave$lunaid)) # 24 unique participants missing
+
+```
+
+#NAs 
+```{r}
+#removing NAs for now 
+behave_filtered <- hpc_behave [complete.cases (hpc_behave$upps_tot)] #didn't work?
+
+```
+
+
+
+#next steps
+```{r}
+
+# look at the distributions of upps and rt scores (histogram) - is there enough
+# variability in the sample? look at separated by sex? outliers? 
+# checking for age related changes in MRS (GABA/Glu) ; total upps ; total rt-18 
+# running gam models > add sex as covariate, when running MRS models add hemisphere as covariate
+
+```
+
+
+
+
+
